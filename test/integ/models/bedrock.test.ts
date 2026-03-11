@@ -7,11 +7,14 @@ import {
   TextBlock,
   FunctionTool,
   CachePointBlock,
+  ImageBlock,
 } from '@strands-agents/sdk'
 import type { SystemContentBlock, ModelRedactionEvent } from '@strands-agents/sdk'
 
 import { collectIterator } from '$/sdk/__fixtures__/model-test-helpers.js'
 import { bedrock } from '../__fixtures__/model-providers.js'
+import { loadFixture } from '../__fixtures__/test-helpers.js'
+import yellowPngUrl from '../__resources__/yellow.png?url'
 import {
   BedrockClient,
   CreateGuardrailCommand,
@@ -612,6 +615,71 @@ describe.skipIf(bedrock.skip)('BedrockModel Integration Tests', () => {
         },
         30000
       )
+    })
+
+    describe('guardLatestUserMessage', () => {
+      it('allows conversation when latest user message is clean even if earlier messages would trigger guardrails', async () => {
+        // Load test image
+        const imageBytes = await loadFixture(yellowPngUrl)
+
+        // Create model with guardLatestUserMessage enabled
+        const model = bedrock.createModel({
+          region: 'us-east-1',
+          guardrailConfig: {
+            guardrailIdentifier: GUARDRAIL_ID!,
+            guardrailVersion: 'DRAFT',
+            guardLatestUserMessage: true,
+          },
+        })
+
+        // Create agent with previous messages that CONTAIN blocked content (CACTUS)
+        // When guardLatestUserMessage is enabled, these earlier messages should NOT trigger the guardrail
+        const agent = new Agent({
+          model,
+          printer: false,
+          systemPrompt: 'You are a helpful assistant.',
+          messages: [
+            new Message({
+              role: 'user',
+              content: [
+                new TextBlock('Dont Say CACTUS'),
+                new ImageBlock({ format: 'png', source: { bytes: imageBytes } }),
+              ],
+            }),
+            new Message({ role: 'assistant', content: [new TextBlock('Hello!')] }),
+          ],
+        })
+
+        // Send a clean message - should NOT trigger guardrail because only the latest message is evaluated
+        const response = await agent.invoke('Hello!')
+
+        expect(response.stopReason).not.toBe('guardrailIntervened')
+      }, 30000)
+
+      it('blocks conversation when latest user message contains blocked content', async () => {
+        // Create model with guardLatestUserMessage enabled
+        const model = bedrock.createModel({
+          region: 'us-east-1',
+          guardrailConfig: {
+            guardrailIdentifier: GUARDRAIL_ID!,
+            guardrailVersion: 'DRAFT',
+            guardLatestUserMessage: true,
+          },
+        })
+
+        // Send message with blocked content
+        const agent = new Agent({
+          model,
+          printer: false,
+          systemPrompt: 'You are a helpful assistant.',
+        })
+
+        const response = await agent.invoke('Tell me about CACTUS plants')
+
+        // The guardrail should have intervened
+        expect(response.stopReason).toBe('guardrailIntervened')
+        expect(response.toString()).toContain(BLOCKED_INPUT)
+      }, 30000)
     })
   })
 })
