@@ -85,6 +85,7 @@ export { S3Location, ImageBlock, VideoBlock, DocumentBlock } from './types/media
 
 // Media types
 export type {
+  LocationData,
   S3LocationData,
   ImageFormat,
   ImageSource,
