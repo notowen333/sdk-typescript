@@ -105,6 +105,15 @@ sdk-typescript/
 │   │   ├── index.test.ts         # Tests for main entry point
 │   │   └── mcp.test.ts           # Tests for MCP integration
 │   │
+│   ├── vended-plugins/            # Optional vended plugins (not part of core SDK)
+│   │   └── skills/               # AgentSkills plugin for progressive skill disclosure
+│   │       ├── __tests__/        # Unit tests for skills plugin
+│   │       │   ├── agent-skills.test.node.ts  # Tests for AgentSkillsPlugin
+│   │       │   └── skill.test.node.ts         # Tests for Skill data model
+│   │       ├── agent-skills.ts   # AgentSkillsPlugin implementation
+│   │       ├── skill.ts          # Skill data model and loading utilities
+│   │       └── index.ts          # Public exports for skills plugin
+│   │
 │   ├── mcp.ts                    # MCP client implementation
 │   ├── errors.ts                 # Custom error classes
 │   ├── app-state.ts              # App state implementation
@@ -124,6 +133,8 @@ sdk-typescript/
 │   ├── multiagent/               # Multi-agent integration tests
 │   │   ├── graph.test.ts         # Graph orchestrator integration tests
 │   │   └── swarm.test.ts         # Swarm orchestrator integration tests
+│   ├── skills/                   # Skills plugin integration tests
+│   │   └── agent-skills.test.node.ts  # End-to-end skill activation tests
 │   ├── bedrock.test.ts           # Bedrock integration tests (requires AWS credentials)
 │   ├── hooks.test.ts             # Hooks integration tests
 │   └── registry.test.ts          # ToolRegistry integration tests
@@ -177,6 +188,8 @@ sdk-typescript/
 - **`src/tools/`**: Tool definitions, types, and structured output validation with Zod schemas
 - **`src/multiagent/`**: Multi-agent orchestration patterns (Graph for DAG execution, Swarm for handoff-based routing)
 - **`src/types/`**: Core type definitions used across the SDK
+- **`src/vended-plugins/`**: Optional vended plugins (not part of core SDK, independently importable)
+- **`src/vended-plugins/skills/`**: AgentSkills plugin — progressive skill disclosure via SKILL.md files (AgentSkills.io spec)
 - **`src/vended-tools/`**: Optional vended tools (not part of core SDK, independently importable)
 - **`test/integ/`**: Integration tests (tests public API and external integrations)
 - **`.github/workflows/`**: CI/CD automation and quality gates
@@ -429,6 +442,11 @@ export class Example {
 - Private fields MUST use underscore prefix (e.g., `_field`)
 - Public fields MUST NOT use underscore prefix
 - This convention improves code readability and makes the distinction between public and private members immediately visible
+
+#### Naming Conventions for New Features
+
+When choosing names and constants that match an existing implementation in the Python SDK, use exactly the same literal used
+in the Python SDK. Wherever we can achieve compatibility, keep the previous convention.
 
 ### Documentation Requirements
 
