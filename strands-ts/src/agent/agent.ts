@@ -73,6 +73,7 @@ import type { AttributeValue } from '@opentelemetry/api'
 import { logger } from '../logging/logger.js'
 import { CancelledError } from '../errors.js'
 import { ModelRetryStrategy } from '../retry/model-retry-strategy.js'
+import type { RetryStrategy } from '../retry/retry-strategy.js'
 
 /**
  * Recursive type definition for nested tool arrays.
@@ -161,13 +162,13 @@ export type AgentConfig = {
    */
   plugins?: Plugin[]
   /**
-   * Retry strategy for failed model calls (e.g. throttling).
+   * Retry strategy for failed model/tool calls.
    *
    * - Omitted: a sensible default {@link ModelRetryStrategy} with exponential backoff is used.
    * - Provided: the given strategy is used.
    * - `null`: retries are explicitly disabled; failures propagate to the caller.
    */
-  modelRetryStrategy?: ModelRetryStrategy | null
+  retryStrategy?: RetryStrategy | null
   /**
    * Zod schema for structured output validation.
    */
@@ -321,8 +322,8 @@ export class Agent implements LocalAgent, InvokableAgent {
     this._hooksRegistry = new HookRegistryImplementation()
 
     // `undefined` (omitted) → install the default; `null` → explicit opt-out.
-    const modelRetryStrategy =
-      config?.modelRetryStrategy === null ? undefined : (config?.modelRetryStrategy ?? new ModelRetryStrategy())
+    const retryStrategy =
+      config?.retryStrategy === null ? undefined : (config?.retryStrategy ?? new ModelRetryStrategy())
 
     // Initialize plugin registry with all plugins to be initialized during initialize().
     // Ordering notes:
@@ -334,7 +335,7 @@ export class Agent implements LocalAgent, InvokableAgent {
     //   the strategy regardless of registration order.
     this._pluginRegistry = new PluginRegistry([
       this._conversationManager,
-      ...(modelRetryStrategy ? [modelRetryStrategy] : []),
+      ...(retryStrategy ? [retryStrategy] : []),
       ...(config?.plugins ?? []),
       ...(config?.sessionManager ? [config.sessionManager] : []),
       new ModelPlugin(this.model),

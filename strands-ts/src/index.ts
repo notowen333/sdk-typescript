@@ -222,6 +222,7 @@ export {
   ConstantBackoff,
   LinearBackoff,
   ExponentialBackoff,
+  RetryStrategy,
   ModelRetryStrategy,
   type ModelRetryStrategyOptions,
 } from './retry/index.js'
