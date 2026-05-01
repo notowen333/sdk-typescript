@@ -26,7 +26,11 @@ async function triggerContextOverflow(
 ): Promise<{ retry?: boolean }> {
   const pluginAgent = createMockAgent()
   manager.initAgent(pluginAgent)
+<<<<<<< HEAD
   const event = new AfterModelCallEvent({ agent, model: {} as any, error, invocationState: {} })
+=======
+  const event = new AfterModelCallEvent({ agent, model: {} as any, attemptCount: 1, error })
+>>>>>>> b4a1aba (feat: re-design retries as one abstract class per retry type. add attemptCount to AfterModelCallEvent hook)
   await invokeTrackedHook(pluginAgent, event)
   return event
 }
@@ -636,8 +640,13 @@ describe('SlidingWindowConversationManager', () => {
       const event = new AfterModelCallEvent({
         agent: mockAgent,
         model: {} as any,
+<<<<<<< HEAD
         error: originalError,
         invocationState: {},
+=======
+        attemptCount: 1,
+        error: originalError,
+>>>>>>> b4a1aba (feat: re-design retries as one abstract class per retry type. add attemptCount to AfterModelCallEvent hook)
       })
       const pluginAgent = createMockAgent()
       manager.initAgent(pluginAgent)

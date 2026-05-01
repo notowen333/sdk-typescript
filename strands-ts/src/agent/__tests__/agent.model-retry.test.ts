@@ -1,13 +1,15 @@
-// End-to-end wiring test for ModelRetryStrategy on the Agent constructor.
+// End-to-end wiring test for DefaultModelRetryStrategy on the Agent constructor.
 // Uses fake timers so the retry backoff never waits real wall time.
 
 import { describe, expect, it, vi, beforeEach, afterEach } from 'vitest'
 import { Agent } from '../agent.js'
 import { MockMessageModel } from '../../__fixtures__/mock-message-model.js'
+import { DefaultModelRetryStrategy } from '../../retry/default-model-retry-strategy.js'
 import { ModelRetryStrategy } from '../../retry/model-retry-strategy.js'
 import { ConstantBackoff } from '../../retry/backoff-strategy.js'
 import { ModelThrottledError } from '../../errors.js'
 import { AfterModelCallEvent } from '../../hooks/events.js'
+import { logger } from '../../logging/logger.js'
 
 describe('Agent retryStrategy wiring', () => {
   beforeEach(() => {
@@ -24,7 +26,7 @@ describe('Agent retryStrategy wiring', () => {
 
     const agent = new Agent({
       model,
-      retryStrategy: new ModelRetryStrategy({
+      retryStrategy: new DefaultModelRetryStrategy({
         maxAttempts: 3,
         backoff: new ConstantBackoff({ delayMs: 1 }),
       }),
@@ -43,7 +45,7 @@ describe('Agent retryStrategy wiring', () => {
 
     const agent = new Agent({
       model,
-      retryStrategy: new ModelRetryStrategy({
+      retryStrategy: new DefaultModelRetryStrategy({
         maxAttempts: 3,
         backoff: new ConstantBackoff({ delayMs: 1 }),
       }),
@@ -55,7 +57,7 @@ describe('Agent retryStrategy wiring', () => {
     await assertion
   })
 
-  it('installs a default ModelRetryStrategy when none is provided', async () => {
+  it('installs a default DefaultModelRetryStrategy when none is provided', async () => {
     // With no override, two ModelThrottledErrors in a row should still succeed
     // because the defaults allow multiple attempts.
     const model = new MockMessageModel()
@@ -79,7 +81,7 @@ describe('Agent retryStrategy wiring', () => {
 
     const agent = new Agent({
       model,
-      retryStrategy: new ModelRetryStrategy({
+      retryStrategy: new DefaultModelRetryStrategy({
         maxAttempts: 2,
         backoff: new ConstantBackoff({ delayMs: 1 }),
       }),
@@ -102,12 +104,75 @@ describe('Agent retryStrategy wiring', () => {
     await assertion
   })
 
+  it('disables retries when retryStrategy is an empty array', async () => {
+    const model = new MockMessageModel().addTurn(new ModelThrottledError('throttled'))
+
+    const agent = new Agent({ model, retryStrategy: [] })
+
+    const invokePromise = agent.invoke('hi')
+    const assertion = expect(invokePromise).rejects.toThrow(ModelThrottledError)
+    await vi.runAllTimersAsync()
+    await assertion
+  })
+
+  it('accepts an array of distinct retry strategy types', async () => {
+    // A trivial secondary strategy subclass so the two entries have different
+    // constructors (the default DefaultModelRetryStrategy cannot be paired
+    // with a second instance of itself — see the fail-fast test below).
+    class NoopRetryStrategy extends ModelRetryStrategy {
+      readonly name = 'test:noop-retry-strategy'
+      override retryModel(): void {}
+    }
+
+    const model = new MockMessageModel()
+      .addTurn(new ModelThrottledError('throttled'))
+      .addTurn({ type: 'textBlock', text: 'ok' })
+
+    const primary = new DefaultModelRetryStrategy({
+      maxAttempts: 3,
+      backoff: new ConstantBackoff({ delayMs: 1 }),
+    })
+
+    const agent = new Agent({ model, retryStrategy: [primary, new NoopRetryStrategy()] })
+    const invokePromise = agent.invoke('hi')
+    await vi.runAllTimersAsync()
+    const result = await invokePromise
+
+    expect(result.lastMessage.content[0]).toEqual({ type: 'textBlock', text: 'ok' })
+  })
+
+  it('warns and drops duplicates when two retry strategies of the same type are provided', async () => {
+    const warn = vi.spyOn(logger, 'warn').mockImplementation(() => {})
+
+    const model = new MockMessageModel()
+      .addTurn(new ModelThrottledError('throttled'))
+      .addTurn({ type: 'textBlock', text: 'ok' })
+
+    const agent = new Agent({
+      model,
+      retryStrategy: [
+        new DefaultModelRetryStrategy({ maxAttempts: 3, backoff: new ConstantBackoff({ delayMs: 1 }) }),
+        new DefaultModelRetryStrategy({ maxAttempts: 3, backoff: new ConstantBackoff({ delayMs: 1 }) }),
+      ],
+    })
+
+    expect(warn).toHaveBeenCalledWith(expect.stringContaining('DefaultModelRetryStrategy'))
+
+    // Agent still functions: the first strategy handled the throttling error.
+    const invokePromise = agent.invoke('hi')
+    await vi.runAllTimersAsync()
+    const result = await invokePromise
+    expect(result.lastMessage.content[0]).toEqual({ type: 'textBlock', text: 'ok' })
+
+    warn.mockRestore()
+  })
+
   it('respects a user hook that already set retry=true (no double wait, no double increment)', async () => {
     const model = new MockMessageModel()
       .addTurn(new ModelThrottledError('throttled'))
       .addTurn({ type: 'textBlock', text: 'ok' })
 
-    const strategy = new ModelRetryStrategy({
+    const strategy = new DefaultModelRetryStrategy({
       maxAttempts: 2, // only 1 retry allowed — if our strategy also incremented, we'd exceed
       backoff: new ConstantBackoff({ delayMs: 10_000 }), // huge delay — if we slept on top, test would time out
     })
@@ -127,7 +192,7 @@ describe('Agent retryStrategy wiring', () => {
   })
 
   it('throws if the same instance is attached to two agents', async () => {
-    const strategy = new ModelRetryStrategy()
+    const strategy = new DefaultModelRetryStrategy()
 
     const agent1 = new Agent({
       model: new MockMessageModel().addTurn({ type: 'textBlock', text: 'ok' }),

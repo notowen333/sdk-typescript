@@ -456,12 +456,17 @@ describe('AfterModelCallEvent', () => {
     const message = new Message({ role: 'assistant', content: [new TextBlock('Response')] })
     const stopReason = 'endTurn'
     const response = { message, stopReason }
+<<<<<<< HEAD
     const event = new AfterModelCallEvent({ agent, model: agent.model, stopData: response, invocationState: {} })
+=======
+    const event = new AfterModelCallEvent({ agent, model: agent.model, attemptCount: 1, stopData: response })
+>>>>>>> b4a1aba (feat: re-design retries as one abstract class per retry type. add attemptCount to AfterModelCallEvent hook)
 
     expect(event).toEqual({
       type: 'afterModelCallEvent',
       agent: agent,
       model: agent.model,
+      attemptCount: 1,
       stopData: response,
       error: undefined,
       invocationState: {},
@@ -477,12 +482,17 @@ describe('AfterModelCallEvent', () => {
     const message = new Message({ role: 'assistant', content: [] })
     const error = new Error('Model failed')
     const response = { message, stopReason: 'error' }
+<<<<<<< HEAD
     const event = new AfterModelCallEvent({ agent, model: agent.model, stopData: response, error, invocationState: {} })
+=======
+    const event = new AfterModelCallEvent({ agent, model: agent.model, attemptCount: 1, stopData: response, error })
+>>>>>>> b4a1aba (feat: re-design retries as one abstract class per retry type. add attemptCount to AfterModelCallEvent hook)
 
     expect(event).toEqual({
       type: 'afterModelCallEvent',
       agent: agent,
       model: agent.model,
+      attemptCount: 1,
       stopData: response,
       error: error,
       invocationState: {},
@@ -493,14 +503,22 @@ describe('AfterModelCallEvent', () => {
     const agent = new Agent()
     const message = new Message({ role: 'assistant', content: [] })
     const response = { message, stopReason: 'endTurn' }
+<<<<<<< HEAD
     const event = new AfterModelCallEvent({ agent, model: agent.model, stopData: response, invocationState: {} })
+=======
+    const event = new AfterModelCallEvent({ agent, model: agent.model, attemptCount: 1, stopData: response })
+>>>>>>> b4a1aba (feat: re-design retries as one abstract class per retry type. add attemptCount to AfterModelCallEvent hook)
     expect(event._shouldReverseCallbacks()).toBe(true)
   })
 
   it('allows retry to be set when error is present', () => {
     const agent = new Agent()
     const error = new Error('Model failed')
+<<<<<<< HEAD
     const event = new AfterModelCallEvent({ agent, model: agent.model, error, invocationState: {} })
+=======
+    const event = new AfterModelCallEvent({ agent, model: agent.model, attemptCount: 1, error })
+>>>>>>> b4a1aba (feat: re-design retries as one abstract class per retry type. add attemptCount to AfterModelCallEvent hook)
 
     // Initially undefined
     expect(event.retry).toBeUndefined()
@@ -517,7 +535,11 @@ describe('AfterModelCallEvent', () => {
   it('retry is optional and defaults to undefined', () => {
     const agent = new Agent()
     const error = new Error('Model failed')
+<<<<<<< HEAD
     const event = new AfterModelCallEvent({ agent, model: agent.model, error, invocationState: {} })
+=======
+    const event = new AfterModelCallEvent({ agent, model: agent.model, attemptCount: 1, error })
+>>>>>>> b4a1aba (feat: re-design retries as one abstract class per retry type. add attemptCount to AfterModelCallEvent hook)
 
     expect(event.retry).toBeUndefined()
   })
@@ -962,15 +984,20 @@ describe('toJSON serialization', () => {
   })
 
   describe('AfterModelCallEvent', () => {
-    it('includes stopData and excludes agent and model on success', () => {
+    it('includes stopData and attemptCount and excludes agent and model on success', () => {
       const agent = new Agent()
       const message = new Message({ role: 'assistant', content: [new TextBlock('Hi')] })
       const stopData = { message, stopReason: 'endTurn' as const }
+<<<<<<< HEAD
       const event = new AfterModelCallEvent({ agent, model: agent.model, stopData, invocationState: {} })
+=======
+      const event = new AfterModelCallEvent({ agent, model: agent.model, attemptCount: 2, stopData })
+>>>>>>> b4a1aba (feat: re-design retries as one abstract class per retry type. add attemptCount to AfterModelCallEvent hook)
       const json = JSON.parse(JSON.stringify(event))
 
       expect(json).toStrictEqual({
         type: 'afterModelCallEvent',
+        attemptCount: 2,
         stopData: {
           message: { role: 'assistant', content: [{ text: 'Hi' }] },
           stopReason: 'endTurn',
@@ -981,12 +1008,17 @@ describe('toJSON serialization', () => {
     it('converts error to message string and excludes retry', () => {
       const agent = new Agent()
       const error = new Error('Model failed')
+<<<<<<< HEAD
       const event = new AfterModelCallEvent({ agent, model: agent.model, error, invocationState: {} })
+=======
+      const event = new AfterModelCallEvent({ agent, model: agent.model, attemptCount: 1, error })
+>>>>>>> b4a1aba (feat: re-design retries as one abstract class per retry type. add attemptCount to AfterModelCallEvent hook)
       event.retry = true
       const json = JSON.parse(JSON.stringify(event))
 
       expect(json).toStrictEqual({
         type: 'afterModelCallEvent',
+        attemptCount: 1,
         error: { message: 'Model failed' },
       })
     })
@@ -1122,10 +1154,16 @@ describe('toJSON serialization completeness', () => {
       },
       {
         name: 'AfterModelCallEvent',
+<<<<<<< HEAD
         event: Object.assign(
           new AfterModelCallEvent({ agent, model: agent.model, stopData, error, invocationState: {} }),
           { retry: true }
         ),
+=======
+        event: Object.assign(new AfterModelCallEvent({ agent, model: agent.model, attemptCount: 1, stopData, error }), {
+          retry: true,
+        }),
+>>>>>>> b4a1aba (feat: re-design retries as one abstract class per retry type. add attemptCount to AfterModelCallEvent hook)
       },
       { name: 'MessageAddedEvent', event: new MessageAddedEvent({ agent, message, invocationState: {} }) },
       {

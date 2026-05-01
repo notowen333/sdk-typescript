@@ -14,6 +14,8 @@ export {
   ExponentialBackoff,
 } from './backoff-strategy.js'
 
-export { RetryStrategy } from './retry-strategy.js'
+export { ModelRetryStrategy } from './model-retry-strategy.js'
 
-export { ModelRetryStrategy, type ModelRetryStrategyOptions } from './model-retry-strategy.js'
+export { DefaultModelRetryStrategy, type DefaultModelRetryStrategyOptions } from './default-model-retry-strategy.js'
+
+export type { RetryStrategy } from './retry-strategy.js'

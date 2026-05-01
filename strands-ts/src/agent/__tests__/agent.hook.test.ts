@@ -63,7 +63,11 @@ describe('Agent Hooks Integration', () => {
         new AfterModelCallEvent({
           agent,
           model: agent.model,
+<<<<<<< HEAD
           invocationState: {},
+=======
+          attemptCount: 1,
+>>>>>>> b4a1aba (feat: re-design retries as one abstract class per retry type. add attemptCount to AfterModelCallEvent hook)
           stopData: {
             stopReason: 'endTurn',
             message: new Message({ role: 'assistant', content: [new TextBlock('Hello')] }),
@@ -110,7 +114,11 @@ describe('Agent Hooks Integration', () => {
         new AfterModelCallEvent({
           agent,
           model: agent.model,
+<<<<<<< HEAD
           invocationState: {},
+=======
+          attemptCount: 1,
+>>>>>>> b4a1aba (feat: re-design retries as one abstract class per retry type. add attemptCount to AfterModelCallEvent hook)
           stopData: {
             stopReason: 'endTurn',
             message: new Message({ role: 'assistant', content: [new TextBlock('Hello')] }),

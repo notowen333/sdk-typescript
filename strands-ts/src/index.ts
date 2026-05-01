@@ -222,9 +222,10 @@ export {
   ConstantBackoff,
   LinearBackoff,
   ExponentialBackoff,
-  RetryStrategy,
   ModelRetryStrategy,
-  type ModelRetryStrategyOptions,
+  DefaultModelRetryStrategy,
+  type DefaultModelRetryStrategyOptions,
+  type RetryStrategy,
 } from './retry/index.js'
 
 // Conversation Manager

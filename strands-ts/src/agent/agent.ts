@@ -72,8 +72,9 @@ import { Meter } from '../telemetry/meter.js'
 import type { AttributeValue } from '@opentelemetry/api'
 import { logger } from '../logging/logger.js'
 import { CancelledError } from '../errors.js'
-import { ModelRetryStrategy } from '../retry/model-retry-strategy.js'
+import { DefaultModelRetryStrategy } from '../retry/default-model-retry-strategy.js'
 import type { RetryStrategy } from '../retry/retry-strategy.js'
+import { warnOnDuplicateRetryStrategyTypes } from '../retry/retry-strategy.js'
 
 /**
  * Recursive type definition for nested tool arrays.
@@ -162,13 +163,17 @@ export type AgentConfig = {
    */
   plugins?: Plugin[]
   /**
-   * Retry strategy for failed model/tool calls.
+   * Retry strategy (or strategies) for failed model/tool calls.
    *
-   * - Omitted: a sensible default {@link ModelRetryStrategy} with exponential backoff is used.
-   * - Provided: the given strategy is used.
-   * - `null`: retries are explicitly disabled; failures propagate to the caller.
+   * - Omitted: a sensible default {@link DefaultModelRetryStrategy} with exponential backoff is used.
+   * - Single strategy: the given strategy is used.
+   * - Array of strategies: all are registered, in the given order. Hooks fire
+   *   in reverse registration order, so later entries in the array take
+   *   priority. Duplicates of the same concrete class are dropped (only the
+   *   first of each type is kept) with a logger warning.
+   * - `[]` or `null`: retries are explicitly disabled; failures propagate to the caller.
    */
-  retryStrategy?: RetryStrategy | null
+  retryStrategy?: RetryStrategy | RetryStrategy[] | null
   /**
    * Zod schema for structured output validation.
    */
@@ -321,11 +326,26 @@ export class Agent implements LocalAgent, InvokableAgent {
     // Initialize hooks registry
     this._hooksRegistry = new HookRegistryImplementation()
 
-    // `undefined` (omitted) → install the default; `null` → explicit opt-out.
-    const retryStrategy =
-      config?.retryStrategy === null ? undefined : (config?.retryStrategy ?? new ModelRetryStrategy())
+    // `undefined` (omitted) → install the default; `null`/`[]` → explicit opt-out.
+    const rawRetryStrategies: RetryStrategy[] =
+      config?.retryStrategy === null
+        ? []
+        : config?.retryStrategy === undefined
+          ? [new DefaultModelRetryStrategy()]
+          : Array.isArray(config.retryStrategy)
+            ? config.retryStrategy
+            : [config.retryStrategy]
+    warnOnDuplicateRetryStrategyTypes(rawRetryStrategies)
+    const seenStrategyTypes = new Set<new (...args: never[]) => RetryStrategy>()
+    const retryStrategies = rawRetryStrategies.filter((s) => {
+      const ctor = s.constructor as new (...args: never[]) => RetryStrategy
+      if (seenStrategyTypes.has(ctor)) return false
+      seenStrategyTypes.add(ctor)
+      return true
+    })
 
     // Initialize plugin registry with all plugins to be initialized during initialize().
+<<<<<<< HEAD
     // Ordering notes:
     // - ModelPlugin is registered last so that on AfterInvocationEvent (which uses
     //   reverse callback ordering), it runs first — clearing messages before
@@ -333,9 +353,14 @@ export class Agent implements LocalAgent, InvokableAgent {
     // - Retry-strategy ordering is not load-bearing for correctness: `ModelRetryStrategy`
     //   guards on `event.retry`, so a user hook that already set it short-circuits
     //   the strategy regardless of registration order.
+=======
+    // Ordering is not load-bearing for retry correctness: `DefaultModelRetryStrategy`
+    // guards on `event.retry` so a user hook that already set it short-circuits
+    // the strategy regardless of registration order.
+>>>>>>> b4a1aba (feat: re-design retries as one abstract class per retry type. add attemptCount to AfterModelCallEvent hook)
     this._pluginRegistry = new PluginRegistry([
       this._conversationManager,
-      ...(retryStrategy ? [retryStrategy] : []),
+      ...retryStrategies,
       ...(config?.plugins ?? []),
       ...(config?.sessionManager ? [config.sessionManager] : []),
       new ModelPlugin(this.model),
@@ -1026,6 +1051,7 @@ export class Agent implements LocalAgent, InvokableAgent {
       streamOptions.toolChoice = toolChoice
     }
 
+<<<<<<< HEAD
     // Estimate input tokens for the upcoming model call (non-fatal if estimation fails)
     let projectedInputTokens: number | undefined
     try {
@@ -1092,18 +1118,37 @@ export class Agent implements LocalAgent, InvokableAgent {
         stopReason: result.stopReason,
         invocationState,
       })
+=======
+    let attemptCount = 1
+    while (true) {
+      yield new BeforeModelCallEvent({ agent: this, model: this.model })
 
-      // Handle user content redaction if guardrails blocked input
-      if (result.redaction?.userMessage) {
-        this._redactLastMessage(result.redaction.userMessage)
-      }
+      // Start model span within loop span context
+      const modelId = this.model.modelId
+      const modelSpan = this._tracer.startModelInvokeSpan({
+        messages: this.messages,
+        ...(modelId && { modelId }),
+        ...(this.systemPrompt !== undefined && { systemPrompt: this.systemPrompt }),
+      })
 
-      const stopData: ModelStopData = {
-        message: result.message,
-        stopReason: result.stopReason,
-        ...(result.redaction && { redaction: result.redaction }),
-      }
+      try {
+        const result = yield* this._streamFromModel(this.messages, streamOptions)
+>>>>>>> b4a1aba (feat: re-design retries as one abstract class per retry type. add attemptCount to AfterModelCallEvent hook)
 
+        // Accumulate token usage and model latency metrics
+        this._meter.updateCycle(result.metadata)
+
+        // End model span with usage
+        const usage = result.metadata?.usage
+        const metrics = result.metadata?.metrics
+        this._tracer.endModelInvokeSpan(modelSpan, {
+          output: result.message,
+          stopReason: result.stopReason,
+          ...(usage && { usage }),
+          ...(metrics && { metrics }),
+        })
+
+<<<<<<< HEAD
       const afterModelCallEvent = new AfterModelCallEvent({
         agent: this,
         model: this.model,
@@ -1115,14 +1160,25 @@ export class Agent implements LocalAgent, InvokableAgent {
       if (afterModelCallEvent.retry) {
         return yield* this._invokeModel(invocationState, toolChoice)
       }
+=======
+        yield new ModelMessageEvent({ agent: this, message: result.message, stopReason: result.stopReason })
 
-      return result
-    } catch (error) {
-      const modelError = normalizeError(error)
+        // Handle user content redaction if guardrails blocked input
+        if (result.redaction?.userMessage) {
+          this._redactLastMessage(result.redaction.userMessage)
+        }
+>>>>>>> b4a1aba (feat: re-design retries as one abstract class per retry type. add attemptCount to AfterModelCallEvent hook)
 
-      // End model span with error
-      this._tracer.endModelInvokeSpan(modelSpan, { error: modelError })
+        const stopData: ModelStopData = {
+          message: result.message,
+          stopReason: result.stopReason,
+          ...(result.redaction && { redaction: result.redaction }),
+        }
 
+        const afterModelCallEvent = new AfterModelCallEvent({ agent: this, model: this.model, attemptCount, stopData })
+        yield afterModelCallEvent
+
+<<<<<<< HEAD
       // Create error event
       const errorEvent = new AfterModelCallEvent({
         agent: this,
@@ -1130,15 +1186,47 @@ export class Agent implements LocalAgent, InvokableAgent {
         error: modelError,
         invocationState,
       })
+=======
+        if (afterModelCallEvent.retry) {
+          attemptCount += 1
+          continue
+        }
+>>>>>>> b4a1aba (feat: re-design retries as one abstract class per retry type. add attemptCount to AfterModelCallEvent hook)
 
-      // Yield error event - stream will invoke hooks
-      yield errorEvent
+        return result
+      } catch (error) {
+        const modelError = normalizeError(error)
 
-      // Let CancelledError propagate directly — no retry
-      // (we emit the AfterModelCall because we already emitted Before and we guarentee the pair)
-      if (error instanceof CancelledError) {
+        // End model span with error
+        this._tracer.endModelInvokeSpan(modelSpan, { error: modelError })
+
+        // Create error event
+        const errorEvent = new AfterModelCallEvent({
+          agent: this,
+          model: this.model,
+          attemptCount,
+          error: modelError,
+        })
+
+        // Yield error event - stream will invoke hooks
+        yield errorEvent
+
+        // Let CancelledError propagate directly — no retry
+        // (we emit the AfterModelCall because we already emitted Before and we guarentee the pair)
+        if (error instanceof CancelledError) {
+          throw error
+        }
+
+        // After yielding, hooks have been invoked and may have set retry
+        if (errorEvent.retry) {
+          attemptCount += 1
+          continue
+        }
+
+        // Re-throw error
         throw error
       }
+<<<<<<< HEAD
 
       // After yielding, hooks have been invoked and may have set retry
       if (errorEvent.retry) {
@@ -1147,6 +1235,8 @@ export class Agent implements LocalAgent, InvokableAgent {
 
       // Re-throw error
       throw error
+=======
+>>>>>>> b4a1aba (feat: re-design retries as one abstract class per retry type. add attemptCount to AfterModelCallEvent hook)
     }
   }
 

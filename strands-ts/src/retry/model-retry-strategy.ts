@@ -1,149 +1,64 @@
 /**
- * Retry strategy for model invocations.
- *
- * Overrides {@link RetryStrategy.retryModel} to retry failed model calls.
- * Per-invocation state (attempt counters, timers) is cleared via
- * {@link RetryStrategy.reset}, which the base class calls on
- * {@link AfterInvocationEvent}.
+ * Abstract base class for retry strategies.
  */
 
-import type { AfterModelCallEvent } from '../hooks/events.js'
-import { ModelThrottledError } from '../errors.js'
-import { logger } from '../logging/logger.js'
-import type { BackoffContext, BackoffStrategy } from './backoff-strategy.js'
-import { ExponentialBackoff } from './backoff-strategy.js'
-import { RetryStrategy } from './retry-strategy.js'
-
-const DEFAULT_MAX_ATTEMPTS = 6
-const DEFAULT_BACKOFF_BASE_MS = 4_000
-const DEFAULT_BACKOFF_MAX_MS = 240_000
+import { AfterModelCallEvent } from '../hooks/events.js'
+import type { Plugin } from '../plugins/plugin.js'
+import type { LocalAgent } from '../types/agent.js'
 
 /**
- * Options for {@link ModelRetryStrategy}.
+ * Abstract base class for retry strategies.
+ *
+ * A {@link ModelRetryStrategy} is a {@link Plugin} that retries failed agent calls.
+ * {@link ModelRetryStrategy.retryModel} is abstract: every subclass must declare
+ * how it handles model failures (even if only as an empty method body).
+ *
+ * Future retry topics (e.g. `retryTool`) will be added as non-abstract
+ * methods with no-op defaults so that introducing a new topic does not
+ * break existing external `ModelRetryStrategy` subclasses.
+ *
+ * State scope: the base class does not define any turn- or invocation-level
+ * reset hook. The retried unit is a single turn (one {@link AfterModelCallEvent}),
+ * so any attempt counters or timers are owned by the subclass and cleared
+ * inside {@link ModelRetryStrategy.retryModel} — typically on the success
+ * branch and the non-retryable-error branch.
+ *
+ * Single-agent attachment: retry strategies typically carry per-turn state
+ * (attempt counters, timers), so sharing one instance across two agents
+ * would let their calls trample each other. The base class enforces this by
+ * remembering the first agent it's attached to and throwing on attempts to
+ * attach to a different one. Stateless strategies are unaffected (the guard
+ * only fires when the caller tries to share an instance across agents,
+ * regardless of whether that instance has state).
  */
-export interface ModelRetryStrategyOptions {
+export abstract class ModelRetryStrategy implements Plugin {
   /**
-   * Total model attempts before giving up and re-raising the error.
-   * Must be \>= 1. Default {@link DEFAULT_MAX_ATTEMPTS}.
+   * A stable string identifier for this retry strategy.
    */
-  maxAttempts?: number
+  abstract readonly name: string
+
+  private _attachedAgent: LocalAgent | undefined
+
   /**
-   * Backoff used to compute the delay between retries.
-   * Default: `new ExponentialBackoff({ baseMs: DEFAULT_BACKOFF_BASE_MS, maxMs: DEFAULT_BACKOFF_MAX_MS })`.
+   * Handle a post-model-call event. Set `event.retry = true` (typically after
+   * an `await sleep(delayMs)`) to request that the agent re-invoke the model.
+   * Return without setting `event.retry` to let the error propagate.
+   *
+   * Subclasses that don't retry model calls should implement this as an
+   * empty method — the {@link AfterModelCallEvent} hook is registered by
+   * the base class regardless.
    */
-  backoff?: BackoffStrategy
-}
+  abstract retryModel(event: AfterModelCallEvent): void | Promise<void>
 
-/**
- * Retries failed model calls classified by the SDK as retryable.
- *
- * Today, only {@link ModelThrottledError} is treated as retryable. The set of
- * retryable errors may grow over time (e.g. transient server errors) without
- * requiring changes to this class's public API.
- *
- * State is per-invocation: the attempt counter and the last computed delay
- * reset on {@link AfterInvocationEvent}, and also after any successful model
- * call within an invocation.
- *
- * Hook precedence: {@link AfterModelCallEvent} fires hooks in reverse registration
- * order, so user-registered hooks run before this strategy. If a user hook sets
- * `event.retry = true` first, this strategy returns early and does not stack
- * additional backoff on top.
- *
- * Sharing: a given instance tracks its own attempt state and must not be shared
- * across multiple agents. Create a separate instance per agent.
- *
- * @example
- * ```ts
- * const agent = new Agent({
- *   model,
- *   retryStrategy: new ModelRetryStrategy({ maxAttempts: 4 }),
- * })
- * ```
- */
-export class ModelRetryStrategy extends RetryStrategy {
-  readonly name = 'strands:model-retry-strategy'
-
-  private readonly _maxAttempts: number
-  private readonly _backoff: BackoffStrategy
-
-  private _currentAttempt = 0
-  private _lastDelayMs: number | undefined
-  private _firstFailureAt: number | undefined
-
-  constructor(opts: ModelRetryStrategyOptions = {}) {
-    super()
-    const maxAttempts = opts.maxAttempts ?? DEFAULT_MAX_ATTEMPTS
-    if (!Number.isInteger(maxAttempts) || maxAttempts < 1) {
-      throw new Error(`ModelRetryStrategy: maxAttempts must be an integer >= 1 (got ${maxAttempts})`)
-    }
-    this._maxAttempts = maxAttempts
-    this._backoff =
-      opts.backoff ?? new ExponentialBackoff({ baseMs: DEFAULT_BACKOFF_BASE_MS, maxMs: DEFAULT_BACKOFF_MAX_MS })
-  }
-
-  override async retryModel(event: AfterModelCallEvent): Promise<void> {
-    // Another hook already requested retry — don't stack a second delay on top.
-    if (event.retry) return
-
-    // Success: reset state for the next model call in this invocation.
-    if (event.error === undefined) {
-      this.reset()
-      return
-    }
-
-    if (!this._isRetryable(event.error)) return
-
-    // _currentAttempt represents the attempt that just failed.
-    this._currentAttempt += 1
-    if (this._currentAttempt >= this._maxAttempts) {
-      logger.debug(
-        `current_attempt=<${this._currentAttempt}> max_attempts=<${this._maxAttempts}> | max retry attempts reached`
+  initAgent(agent: LocalAgent): void {
+    if (this._attachedAgent !== undefined && this._attachedAgent !== agent) {
+      throw new Error(
+        `${this.constructor.name}: instance is already attached to another agent. ` +
+          'Create a separate instance per agent.'
       )
-      return
     }
+    this._attachedAgent = agent
 
-    if (this._firstFailureAt === undefined) {
-      this._firstFailureAt = Date.now()
-    }
-
-    // Per-error-class backoff selection is a future extension; today every
-    // retryable error uses the single configured backoff.
-    const delayMs = this._backoff.nextDelay(this._buildContext())
-
-    logger.debug(
-      `retry_delay_ms=<${delayMs}> attempt=<${this._currentAttempt}> max_attempts=<${this._maxAttempts}> ` +
-        `| retryable model error, delaying before retry`
-    )
-
-    await sleep(delayMs)
-
-    this._lastDelayMs = delayMs
-    event.retry = true
+    agent.addHook(AfterModelCallEvent, (event) => this.retryModel(event))
   }
-
-  private _buildContext(): BackoffContext {
-    const ctx: BackoffContext = {
-      attempt: this._currentAttempt,
-      elapsedMs: this._firstFailureAt === undefined ? 0 : Date.now() - this._firstFailureAt,
-    }
-    if (this._lastDelayMs !== undefined) {
-      ctx.lastDelayMs = this._lastDelayMs
-    }
-    return ctx
-  }
-
-  private _isRetryable(error: Error): boolean {
-    return error instanceof ModelThrottledError
-  }
-
-  protected override reset(): void {
-    this._currentAttempt = 0
-    this._lastDelayMs = undefined
-    this._firstFailureAt = undefined
-  }
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => globalThis.setTimeout(resolve, ms))
 }

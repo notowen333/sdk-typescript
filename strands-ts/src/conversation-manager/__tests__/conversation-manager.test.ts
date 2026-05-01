@@ -42,7 +42,11 @@ describe('ConversationManager', () => {
       manager.initAgent(mockAgent)
 
       const error = new ContextWindowOverflowError('overflow')
+<<<<<<< HEAD
       const event = new AfterModelCallEvent({ agent: mockAgent, model: {} as any, error, invocationState: {} })
+=======
+      const event = new AfterModelCallEvent({ agent: mockAgent, model: {} as any, attemptCount: 1, error })
+>>>>>>> b4a1aba (feat: re-design retries as one abstract class per retry type. add attemptCount to AfterModelCallEvent hook)
       await invokeTrackedHook(mockAgent, event)
 
       expect(manager.reduceCallCount).toBe(1)
@@ -57,7 +61,11 @@ describe('ConversationManager', () => {
       manager.initAgent(mockAgent)
 
       const error = new ContextWindowOverflowError('overflow')
+<<<<<<< HEAD
       const event = new AfterModelCallEvent({ agent: mockAgent, model: {} as any, error, invocationState: {} })
+=======
+      const event = new AfterModelCallEvent({ agent: mockAgent, model: {} as any, attemptCount: 1, error })
+>>>>>>> b4a1aba (feat: re-design retries as one abstract class per retry type. add attemptCount to AfterModelCallEvent hook)
       await invokeTrackedHook(mockAgent, event)
 
       expect(manager.reduceCallCount).toBe(1)
@@ -70,7 +78,11 @@ describe('ConversationManager', () => {
       manager.initAgent(mockAgent)
 
       const error = new Error('some other error')
+<<<<<<< HEAD
       const event = new AfterModelCallEvent({ agent: mockAgent, model: {} as any, error, invocationState: {} })
+=======
+      const event = new AfterModelCallEvent({ agent: mockAgent, model: {} as any, attemptCount: 1, error })
+>>>>>>> b4a1aba (feat: re-design retries as one abstract class per retry type. add attemptCount to AfterModelCallEvent hook)
       await invokeTrackedHook(mockAgent, event)
 
       expect(manager.reduceCallCount).toBe(0)
@@ -92,7 +104,11 @@ describe('ConversationManager', () => {
       manager.initAgent(mockAgent)
 
       const error = new ContextWindowOverflowError('overflow')
+<<<<<<< HEAD
       const event = new AfterModelCallEvent({ agent: mockAgent, model: {} as any, error, invocationState: {} })
+=======
+      const event = new AfterModelCallEvent({ agent: mockAgent, model: {} as any, attemptCount: 1, error })
+>>>>>>> b4a1aba (feat: re-design retries as one abstract class per retry type. add attemptCount to AfterModelCallEvent hook)
       await invokeTrackedHook(mockAgent, event)
 
       expect(receivedArgs).toHaveLength(1)
