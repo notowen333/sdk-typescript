@@ -7,29 +7,25 @@ import type { Plugin } from '../plugins/plugin.js'
 import type { LocalAgent } from '../types/agent.js'
 
 /**
- * Abstract base class for retry strategies.
+ * Abstract base class for model-retry strategies.
  *
- * A {@link ModelRetryStrategy} is a {@link Plugin} that retries failed agent calls.
- * {@link ModelRetryStrategy.retryModel} is abstract: every subclass must declare
- * how it handles model failures (even if only as an empty method body).
+ * A {@link ModelRetryStrategy} is a {@link Plugin} that retries failed model
+ * calls. {@link ModelRetryStrategy.retryModel} is abstract: every subclass
+ * must declare how it handles model failures (even if only as an empty method
+ * body). The method receives every `AfterModelCallEvent`, success or failure.
  *
- * Future retry topics (e.g. `retryTool`) will be added as non-abstract
- * methods with no-op defaults so that introducing a new topic does not
- * break existing external `ModelRetryStrategy` subclasses.
+ * Other retry kinds (e.g. tool retries) will land as *sibling* abstract
+ * classes, not as additional methods on this one — different retry kinds
+ * have different unit-of-work boundaries and don't share a single reset
+ * contract.
  *
- * State scope: the base class does not define any turn- or invocation-level
- * reset hook. The retried unit is a single turn (one {@link AfterModelCallEvent}),
- * so any attempt counters or timers are owned by the subclass and cleared
- * inside {@link ModelRetryStrategy.retryModel} — typically on the success
- * branch and the non-retryable-error branch.
+ * State scope: the base class does not define any reset hook. Per-turn
+ * state ownership lives in the subclass; {@link DefaultModelRetryStrategy}
+ * uses `event.attemptCount === 1` as its turn boundary.
  *
- * Single-agent attachment: retry strategies typically carry per-turn state
- * (attempt counters, timers), so sharing one instance across two agents
- * would let their calls trample each other. The base class enforces this by
- * remembering the first agent it's attached to and throwing on attempts to
- * attach to a different one. Stateless strategies are unaffected (the guard
- * only fires when the caller tries to share an instance across agents,
- * regardless of whether that instance has state).
+ * Single-agent attachment: instances typically carry per-turn state, so
+ * sharing one instance across agents would let their calls trample each
+ * other. The base class throws on attempts to attach to a different agent.
  */
 export abstract class ModelRetryStrategy implements Plugin {
   /**
@@ -40,9 +36,15 @@ export abstract class ModelRetryStrategy implements Plugin {
   private _attachedAgent: LocalAgent | undefined
 
   /**
-   * Handle a post-model-call event. Set `event.retry = true` (typically after
-   * an `await sleep(delayMs)`) to request that the agent re-invoke the model.
-   * Return without setting `event.retry` to let the error propagate.
+   * Handle a post-model-call event. Fires for **every** {@link AfterModelCallEvent},
+   * including successful completions (where `event.error` is undefined) — this
+   * lets stateful subclasses use the success path as a turn-boundary signal
+   * (e.g. to reset per-turn backoff state). Error events pass through the
+   * same method; implementations typically branch on `event.error`.
+   *
+   * To request a retry, set `event.retry = true` (typically after an
+   * `await sleep(delayMs)`). Returning without setting `event.retry` lets
+   * the error propagate normally.
    *
    * Subclasses that don't retry model calls should implement this as an
    * empty method — the {@link AfterModelCallEvent} hook is registered by

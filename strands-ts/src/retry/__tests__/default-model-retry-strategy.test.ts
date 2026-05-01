@@ -10,7 +10,7 @@ import { ModelThrottledError } from '../../errors.js'
 import { createMockAgent, invokeTrackedHook, type MockAgent } from '../../__fixtures__/agent-helpers.js'
 
 function makeErrorEvent(agent: MockAgent, error: Error, attemptCount: number): AfterModelCallEvent {
-  return new AfterModelCallEvent({ agent, model: {} as never, attemptCount, error })
+  return new AfterModelCallEvent({ agent, model: {} as never, attemptCount, error, invocationState: {} })
 }
 
 describe('DefaultModelRetryStrategy', () => {

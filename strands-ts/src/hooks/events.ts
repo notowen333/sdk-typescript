@@ -472,22 +472,16 @@ export class AfterModelCallEvent extends HookableEvent {
   constructor(data: {
     agent: LocalAgent
     model: Model
-<<<<<<< HEAD
     invocationState: InvocationState
-=======
     attemptCount: number
->>>>>>> b4a1aba (feat: re-design retries as one abstract class per retry type. add attemptCount to AfterModelCallEvent hook)
     stopData?: ModelStopData
     error?: Error
   }) {
     super()
     this.agent = data.agent
     this.model = data.model
-<<<<<<< HEAD
     this.invocationState = data.invocationState
-=======
     this.attemptCount = data.attemptCount
->>>>>>> b4a1aba (feat: re-design retries as one abstract class per retry type. add attemptCount to AfterModelCallEvent hook)
     if (data.stopData !== undefined) {
       this.stopData = data.stopData
     }

@@ -17,11 +17,13 @@ describe('NullConversationManager', () => {
       manager.initAgent(mockAgent)
 
       const error = new ContextWindowOverflowError('Context overflow')
-<<<<<<< HEAD
-      const event = new AfterModelCallEvent({ agent: mockAgent, model: {} as any, error, invocationState: {} })
-=======
-      const event = new AfterModelCallEvent({ agent: mockAgent, model: {} as any, attemptCount: 1, error })
->>>>>>> b4a1aba (feat: re-design retries as one abstract class per retry type. add attemptCount to AfterModelCallEvent hook)
+      const event = new AfterModelCallEvent({
+        agent: mockAgent,
+        model: {} as any,
+        attemptCount: 1,
+        error,
+        invocationState: {},
+      })
       await invokeTrackedHook(mockAgent, event)
 
       // Messages should be unchanged — NullConversationManager never reduces
@@ -36,11 +38,13 @@ describe('NullConversationManager', () => {
       manager.initAgent(mockAgent)
 
       const error = new ContextWindowOverflowError('Context overflow')
-<<<<<<< HEAD
-      const event = new AfterModelCallEvent({ agent: mockAgent, model: {} as any, error, invocationState: {} })
-=======
-      const event = new AfterModelCallEvent({ agent: mockAgent, model: {} as any, attemptCount: 1, error })
->>>>>>> b4a1aba (feat: re-design retries as one abstract class per retry type. add attemptCount to AfterModelCallEvent hook)
+      const event = new AfterModelCallEvent({
+        agent: mockAgent,
+        model: {} as any,
+        attemptCount: 1,
+        error,
+        invocationState: {},
+      })
       await invokeTrackedHook(mockAgent, event)
 
       // reduce() returns false, so retry should not be set

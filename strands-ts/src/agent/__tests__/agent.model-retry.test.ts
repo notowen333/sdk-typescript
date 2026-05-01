@@ -141,28 +141,15 @@ describe('Agent retryStrategy wiring', () => {
     expect(result.lastMessage.content[0]).toEqual({ type: 'textBlock', text: 'ok' })
   })
 
-  it('warns and drops duplicates when two retry strategies of the same type are provided', async () => {
+  it('warns when two retry strategies of the same type are provided', () => {
     const warn = vi.spyOn(logger, 'warn').mockImplementation(() => {})
 
-    const model = new MockMessageModel()
-      .addTurn(new ModelThrottledError('throttled'))
-      .addTurn({ type: 'textBlock', text: 'ok' })
-
-    const agent = new Agent({
-      model,
-      retryStrategy: [
-        new DefaultModelRetryStrategy({ maxAttempts: 3, backoff: new ConstantBackoff({ delayMs: 1 }) }),
-        new DefaultModelRetryStrategy({ maxAttempts: 3, backoff: new ConstantBackoff({ delayMs: 1 }) }),
-      ],
+    new Agent({
+      model: new MockMessageModel(),
+      retryStrategy: [new DefaultModelRetryStrategy(), new DefaultModelRetryStrategy()],
     })
 
     expect(warn).toHaveBeenCalledWith(expect.stringContaining('DefaultModelRetryStrategy'))
-
-    // Agent still functions: the first strategy handled the throttling error.
-    const invokePromise = agent.invoke('hi')
-    await vi.runAllTimersAsync()
-    const result = await invokePromise
-    expect(result.lastMessage.content[0]).toEqual({ type: 'textBlock', text: 'ok' })
 
     warn.mockRestore()
   })
