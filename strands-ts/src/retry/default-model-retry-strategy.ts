@@ -1,11 +1,14 @@
 /**
- * Retry strategy for model invocations.
+ * Default concrete retry strategy for model invocations.
  *
- * Overrides {@link ModelRetryStrategy.retryModel} to retry failed model calls.
+ * Implements {@link ModelRetryStrategy.computeRetryDecision} to retry failed model
+ * calls classified by {@link isRetryable}, bounded by `maxAttempts`, with
+ * delays computed by the configured {@link BackoffStrategy}.
+ *
  * The attempt counter lives on {@link AfterModelCallEvent.attemptCount},
  * maintained by the agent loop. This strategy only keeps per-turn backoff
- * state (first-failure timestamp, last delay), which is cleared on the
- * first attempt of each new turn (detected via `event.attemptCount === 1`).
+ * state (first-failure timestamp, last delay), which is cleared in
+ * {@link onFirstModelAttempt}.
  */
 
 import type { AfterModelCallEvent } from '../hooks/events.js'
@@ -14,6 +17,7 @@ import { logger } from '../logging/logger.js'
 import type { BackoffContext, BackoffStrategy } from './backoff-strategy.js'
 import { ExponentialBackoff } from './backoff-strategy.js'
 import { ModelRetryStrategy } from './model-retry-strategy.js'
+import type { RetryDecision } from './retry-strategy.js'
 
 const DEFAULT_MAX_ATTEMPTS = 6
 const DEFAULT_BACKOFF_BASE_MS = 4_000
@@ -38,17 +42,18 @@ export interface DefaultModelRetryStrategyOptions {
 /**
  * Retries failed model calls classified by the SDK as retryable.
  *
- * Today, only {@link ModelThrottledError} is treated as retryable. The set of
- * retryable errors may grow over time (e.g. transient server errors) without
- * requiring changes to this class's public API.
+ * Today, only {@link ModelThrottledError} is treated as retryable — subclass
+ * and override {@link isRetryable} to expand or narrow that set without
+ * reimplementing the rest of the retry policy.
  *
- * State is per-turn: backoff timing state resets on the first attempt of
- * each new turn. The attempt counter itself is owned by the agent loop and
- * read off {@link AfterModelCallEvent.attemptCount}.
+ * State is per-turn: backoff timing state resets in {@link onFirstModelAttempt},
+ * which the base class calls when `event.attemptCount === 1`. The attempt
+ * counter itself is owned by the agent loop and read off
+ * {@link AfterModelCallEvent.attemptCount}.
  *
  * Hook precedence: {@link AfterModelCallEvent} fires hooks in reverse registration
  * order, so user-registered hooks run before this strategy. If a user hook sets
- * `event.retry = true` first, this strategy returns early and does not stack
+ * `event.retry = true` first, the base class returns early and does not stack
  * additional backoff on top.
  *
  * Sharing: a given instance tracks its own backoff state and must not be shared
@@ -63,7 +68,7 @@ export interface DefaultModelRetryStrategyOptions {
  * ```
  */
 export class DefaultModelRetryStrategy extends ModelRetryStrategy {
-  readonly name = 'strands:model-retry-strategy'
+  readonly name: string = 'strands:default-model-retry-strategy'
 
   private readonly _maxAttempts: number
   private readonly _backoff: BackoffStrategy
@@ -82,40 +87,45 @@ export class DefaultModelRetryStrategy extends ModelRetryStrategy {
       opts.backoff ?? new ExponentialBackoff({ baseMs: DEFAULT_BACKOFF_BASE_MS, maxMs: DEFAULT_BACKOFF_MAX_MS })
   }
 
-  override async retryModel(event: AfterModelCallEvent): Promise<void> {
-    // Another hook already requested retry — don't stack a second delay on top.
-    if (event.retry) return
+  /**
+   * Whether `error` should be retried. Override to extend or narrow the
+   * retryable set (e.g. to also retry transient 5xx errors).
+   */
+  public isRetryable(error: Error): boolean {
+    return error instanceof ModelThrottledError
+  }
 
-    // Clear any state left over from a prior turn at the turn boundary.
-    if (event.attemptCount === 1) this._reset()
-
-    if (event.error === undefined) return
-    if (!this._isRetryable(event.error)) return
+  protected override computeRetryDecision(event: AfterModelCallEvent): RetryDecision {
+    const error = event.error
+    if (error === undefined || !this.isRetryable(error)) {
+      return { retry: false }
+    }
 
     if (event.attemptCount >= this._maxAttempts) {
       logger.debug(
         `attempt_count=<${event.attemptCount}> max_attempts=<${this._maxAttempts}> | max retry attempts reached`
       )
-      return
+      return { retry: false }
     }
 
     if (this._firstFailureAt === undefined) {
       this._firstFailureAt = Date.now()
     }
 
-    // Per-error-class backoff selection is a future extension; today every
-    // retryable error uses the single configured backoff.
-    const delayMs = this._backoff.nextDelay(this._buildContext(event.attemptCount))
+    const waitMs = this._backoff.nextDelay(this._buildContext(event.attemptCount))
 
     logger.debug(
-      `retry_delay_ms=<${delayMs}> attempt_count=<${event.attemptCount}> max_attempts=<${this._maxAttempts}> ` +
+      `retry_delay_ms=<${waitMs}> attempt_count=<${event.attemptCount}> max_attempts=<${this._maxAttempts}> ` +
         `| retryable model error, delaying before retry`
     )
 
-    await sleep(delayMs)
+    this._lastDelayMs = waitMs
+    return { retry: true, waitMs }
+  }
 
-    this._lastDelayMs = delayMs
-    event.retry = true
+  protected override onFirstModelAttempt(): void {
+    this._lastDelayMs = undefined
+    this._firstFailureAt = undefined
   }
 
   private _buildContext(attemptCount: number): BackoffContext {
@@ -128,17 +138,4 @@ export class DefaultModelRetryStrategy extends ModelRetryStrategy {
     }
     return ctx
   }
-
-  private _isRetryable(error: Error): boolean {
-    return error instanceof ModelThrottledError
-  }
-
-  private _reset(): void {
-    this._lastDelayMs = undefined
-    this._firstFailureAt = undefined
-  }
-}
-
-function sleep(ms: number): Promise<void> {
-  return new Promise((resolve) => globalThis.setTimeout(resolve, ms))
 }

@@ -1,5 +1,5 @@
 /**
- * Union type for all retry strategies accepted by the agent.
+ * Shared retry primitives.
  */
 
 import { logger } from '../logging/logger.js'
@@ -11,6 +11,18 @@ import type { ModelRetryStrategy } from './model-retry-strategy.js'
 // Today this only admits model retries. Future retry kinds (e.g. tool retries)
 // will be added as additional arms of this union.
 export type RetryStrategy = ModelRetryStrategy
+
+/**
+ * Decision returned by a retry strategy's per-event `compute*RetryDecision` method.
+ *
+ * Discriminated union: `retry: true` carries the wait duration the framework
+ * will sleep for before re-invoking the failed operation. `retry: false`
+ * carries nothing — the error propagates to the caller.
+ *
+ * Shared across retry kinds (model retries today; tool retries and others
+ * later) so all strategies speak the same decision shape.
+ */
+export type RetryDecision = { retry: false } | { retry: true; waitMs: number }
 
 /**
  * Emit a warning for each duplicate-type retry strategy in the list.

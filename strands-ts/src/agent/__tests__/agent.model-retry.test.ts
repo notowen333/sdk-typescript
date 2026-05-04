@@ -6,6 +6,7 @@ import { Agent } from '../agent.js'
 import { MockMessageModel } from '../../__fixtures__/mock-message-model.js'
 import { DefaultModelRetryStrategy } from '../../retry/default-model-retry-strategy.js'
 import { ModelRetryStrategy } from '../../retry/model-retry-strategy.js'
+import type { RetryDecision } from '../../retry/retry-strategy.js'
 import { ConstantBackoff } from '../../retry/backoff-strategy.js'
 import { ModelThrottledError } from '../../errors.js'
 import { AfterModelCallEvent } from '../../hooks/events.js'
@@ -121,7 +122,9 @@ describe('Agent retryStrategy wiring', () => {
     // with a second instance of itself — see the fail-fast test below).
     class NoopRetryStrategy extends ModelRetryStrategy {
       readonly name = 'test:noop-retry-strategy'
-      override retryModel(): void {}
+      protected override computeRetryDecision(): RetryDecision {
+        return { retry: false }
+      }
     }
 
     const model = new MockMessageModel()

@@ -226,6 +226,7 @@ export {
   DefaultModelRetryStrategy,
   type DefaultModelRetryStrategyOptions,
   type RetryStrategy,
+  type RetryDecision,
 } from './retry/index.js'
 
 // Conversation Manager

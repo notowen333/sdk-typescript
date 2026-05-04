@@ -4,6 +4,7 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest'
 import { DefaultModelRetryStrategy } from '../default-model-retry-strategy.js'
 import { ModelRetryStrategy } from '../model-retry-strategy.js'
+import type { RetryDecision } from '../retry-strategy.js'
 import { ConstantBackoff, type BackoffStrategy } from '../backoff-strategy.js'
 import { AfterModelCallEvent } from '../../hooks/events.js'
 import { ModelThrottledError } from '../../errors.js'
@@ -30,7 +31,7 @@ describe('DefaultModelRetryStrategy', () => {
   })
 
   it('exposes the plugin name', () => {
-    expect(new DefaultModelRetryStrategy().name).toBe('strands:model-retry-strategy')
+    expect(new DefaultModelRetryStrategy().name).toBe('strands:default-model-retry-strategy')
   })
 
   it('is a ModelRetryStrategy', () => {
@@ -176,5 +177,89 @@ describe('DefaultModelRetryStrategy', () => {
       elapsedMs: expect.any(Number),
       lastDelayMs: 5,
     })
+  })
+
+  it('clears per-turn state on attempt 1 even when a prior hook already set event.retry', async () => {
+    // Regression: onFirstModelAttempt must fire before the event.retry short-circuit.
+    // Otherwise state from a prior turn leaks into the new turn's BackoffContext.
+    const nextDelay = vi.fn<BackoffStrategy['nextDelay']>().mockReturnValue(5)
+    const backoff: BackoffStrategy = { nextDelay }
+    const strategy = new DefaultModelRetryStrategy({ maxAttempts: 5, backoff })
+    const agent = createMockAgent()
+    strategy.initAgent(agent)
+
+    // Turn 1 → fail → lastDelayMs gets set to 5.
+    const e1 = makeErrorEvent(agent, new ModelThrottledError('x'), 1)
+    const p1 = invokeTrackedHook(agent, e1)
+    await vi.advanceTimersByTimeAsync(5)
+    await p1
+
+    // Turn 2 → attempt 1 → another hook already set retry=true before us.
+    // We should still clear state (onFirstModelAttempt runs first), even though
+    // we short-circuit and don't call computeRetryDecision.
+    const e2 = makeErrorEvent(agent, new ModelThrottledError('x'), 1)
+    e2.retry = true
+    await invokeTrackedHook(agent, e2)
+
+    // Turn 2 → attempt 2 → backoff should see no lastDelayMs from turn 1.
+    const e3 = makeErrorEvent(agent, new ModelThrottledError('x'), 2)
+    const p3 = invokeTrackedHook(agent, e3)
+    await vi.advanceTimersByTimeAsync(5)
+    await p3
+
+    // Second call is turn 2 attempt 2; must not carry turn 1's lastDelayMs.
+    expect(nextDelay.mock.calls[1]![0]).toEqual({
+      attempt: 2,
+      elapsedMs: expect.any(Number),
+    })
+  })
+
+  it('lets subclasses expand the retryable set by overriding isRetryable', async () => {
+    class CustomError extends Error {}
+
+    class PermissiveStrategy extends DefaultModelRetryStrategy {
+      override readonly name = 'test:permissive'
+      override isRetryable(error: Error): boolean {
+        return super.isRetryable(error) || error instanceof CustomError
+      }
+    }
+
+    const strategy = new PermissiveStrategy({
+      maxAttempts: 3,
+      backoff: new ConstantBackoff({ delayMs: 10 }),
+    })
+    const agent = createMockAgent()
+    strategy.initAgent(agent)
+
+    const event = makeErrorEvent(agent, new CustomError('custom'), 1)
+    const pending = invokeTrackedHook(agent, event)
+    await vi.advanceTimersByTimeAsync(10)
+    await pending
+
+    expect(event.retry).toBe(true)
+  })
+
+  it('short-circuits without retry when computeRetryDecision returns retry:false for a non-max reason', async () => {
+    // Exercises the computeRetryDecision "return { retry: false }" branch that
+    // isn't about maxAttempts. A subclass declines to retry a specific error
+    // instance even though the classifier said it was retryable in principle.
+    class PickyStrategy extends DefaultModelRetryStrategy {
+      override readonly name = 'test:picky'
+      protected override computeRetryDecision(event: AfterModelCallEvent): RetryDecision {
+        if ((event.error as Error).message === 'skip') return { retry: false }
+        return super.computeRetryDecision(event)
+      }
+    }
+
+    const strategy = new PickyStrategy({
+      maxAttempts: 5,
+      backoff: new ConstantBackoff({ delayMs: 10 }),
+    })
+    const agent = createMockAgent()
+    strategy.initAgent(agent)
+
+    const event = makeErrorEvent(agent, new ModelThrottledError('skip'), 1)
+    await invokeTrackedHook(agent, event)
+    expect(event.retry).toBeUndefined()
   })
 })

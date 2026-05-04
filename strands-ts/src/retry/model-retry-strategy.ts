@@ -1,27 +1,30 @@
 /**
- * Abstract base class for retry strategies.
+ * Abstract base class for model-retry strategies.
  */
 
 import { AfterModelCallEvent } from '../hooks/events.js'
 import type { Plugin } from '../plugins/plugin.js'
 import type { LocalAgent } from '../types/agent.js'
+import type { RetryDecision } from './retry-strategy.js'
 
 /**
  * Abstract base class for model-retry strategies.
  *
  * A {@link ModelRetryStrategy} is a {@link Plugin} that retries failed model
- * calls. {@link ModelRetryStrategy.retryModel} is abstract: every subclass
- * must declare how it handles model failures (even if only as an empty method
- * body). The method receives every `AfterModelCallEvent`, success or failure.
+ * calls. Subclasses implement {@link computeRetryDecision} to answer *whether* to retry
+ * and *how long* to wait; the base class orchestrates the rest:
+ *
+ * 1. Short-circuits if another hook already set `event.retry` (no stacked delay).
+ * 2. Short-circuits on success events (`event.error === undefined`).
+ * 3. Calls {@link onFirstModelAttempt} on turn boundaries (`event.attemptCount === 1`),
+ *    letting stateful subclasses clear per-turn state.
+ * 4. Invokes {@link computeRetryDecision}; on `retry: true`, sleeps for `waitMs` then
+ *    sets `event.retry = true`.
  *
  * Other retry kinds (e.g. tool retries) will land as *sibling* abstract
  * classes, not as additional methods on this one — different retry kinds
- * have different unit-of-work boundaries and don't share a single reset
+ * have different unit-of-work boundaries and don't share a single state
  * contract.
- *
- * State scope: the base class does not define any reset hook. Per-turn
- * state ownership lives in the subclass; {@link DefaultModelRetryStrategy}
- * uses `event.attemptCount === 1` as its turn boundary.
  *
  * Single-agent attachment: instances typically carry per-turn state, so
  * sharing one instance across agents would let their calls trample each
@@ -36,21 +39,50 @@ export abstract class ModelRetryStrategy implements Plugin {
   private _attachedAgent: LocalAgent | undefined
 
   /**
-   * Handle a post-model-call event. Fires for **every** {@link AfterModelCallEvent},
-   * including successful completions (where `event.error` is undefined) — this
-   * lets stateful subclasses use the success path as a turn-boundary signal
-   * (e.g. to reset per-turn backoff state). Error events pass through the
-   * same method; implementations typically branch on `event.error`.
+   * Decide whether to retry the failed model call, and how long to wait first.
    *
-   * To request a retry, set `event.retry = true` (typically after an
-   * `await sleep(delayMs)`). Returning without setting `event.retry` lets
-   * the error propagate normally.
+   * Called only for error events that have not already been marked for retry
+   * by another hook. The base class has already filtered out successes and
+   * short-circuited events where `event.retry` is true, so implementations
+   * only need to reason about `event.error`.
    *
-   * Subclasses that don't retry model calls should implement this as an
-   * empty method — the {@link AfterModelCallEvent} hook is registered by
-   * the base class regardless.
+   * Return `{ retry: false }` to let the error propagate. Return
+   * `{ retry: true, waitMs }` to retry after sleeping for `waitMs`
+   * milliseconds.
    */
-  abstract retryModel(event: AfterModelCallEvent): void | Promise<void>
+  protected abstract computeRetryDecision(event: AfterModelCallEvent): RetryDecision | Promise<RetryDecision>
+
+  /**
+   * Called when `event.attemptCount === 1`, i.e. at the start of a fresh
+   * turn. Subclasses with per-turn state override this to clear it; the
+   * default is a no-op.
+   *
+   * The agent loop guarantees `attemptCount === 1` on every new turn, so
+   * this is a reliable turn-boundary signal.
+   */
+  protected onFirstModelAttempt(): void {}
+
+  /**
+   * @internal
+   * Hook callback invoked by the agent on every {@link AfterModelCallEvent}.
+   * Subclasses should override {@link computeRetryDecision} or
+   * {@link onFirstModelAttempt} instead of this method.
+   */
+  async retryModel(event: AfterModelCallEvent): Promise<void> {
+    // Fire the turn-boundary signal before any short-circuit so per-turn state
+    // always clears at the start of a new turn, even if a user hook already
+    // set event.retry on attempt 1.
+    if (event.attemptCount === 1) this.onFirstModelAttempt()
+
+    if (event.retry) return
+    if (event.error === undefined) return
+
+    const decision = await this.computeRetryDecision(event)
+    if (!decision.retry) return
+
+    await sleep(decision.waitMs)
+    event.retry = true
+  }
 
   initAgent(agent: LocalAgent): void {
     if (this._attachedAgent !== undefined && this._attachedAgent !== agent) {
@@ -63,4 +95,8 @@ export abstract class ModelRetryStrategy implements Plugin {
 
     agent.addHook(AfterModelCallEvent, (event) => this.retryModel(event))
   }
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => globalThis.setTimeout(resolve, ms))
 }
