@@ -225,11 +225,16 @@ sdk-typescript/
 │   └── pyrightconfig.json        # Python type checking configuration
 │
 ├── strands-wasm/                 # WASM build tooling
+│   ├── __fixtures__/             # Vitest module mocks for WIT imports
+│   ├── __tests__/                # Unit tests for entry.ts internals
+│   ├── test/                     # Tests outside of source
+│   │   └── guest/                # Tests that load the compiled WASM component
 │   ├── entry.ts                  # WASM entry point (TS SDK surface for WASM compilation)
 │   ├── build.js                  # Build script for WASM compilation
 │   ├── patches/                  # Runtime patches for WASM compatibility
 │   │   └── getChunkedStream.js
 │   ├── package.json              # WASM package configuration
+│   ├── vitest.config.ts          # Test configuration (unit + guest projects)
 │   └── tsconfig.json             # TypeScript type-check configuration
 │
 ├── strands-dev/                  # Developer CLI tooling
@@ -331,7 +336,8 @@ See [PR.md](docs/PR.md) for the complete guidance and template.
 Pre-commit hooks automatically run:
 
 - Build (via npm run build, required for workspace type resolution)
-- Unit tests (via npm test)
+- Unit tests with coverage (via npm run test:coverage)
+- WASM unit tests (via npm run test -w strands-wasm)
 - Linting (via npm run lint)
 - Format checking (via npm run format:check)
 - Type checking (via npm run type-check)
