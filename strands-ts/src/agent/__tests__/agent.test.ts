@@ -1718,3 +1718,79 @@ describe('_estimateInputTokens', () => {
     expect(await tokenPromise).toBe(265)
   })
 })
+
+describe('normalizeToolUseNames', () => {
+  it('replaces invalid tool-use names with INVALID_TOOL_NAME before calling model', async () => {
+    const model = new MockMessageModel().addTurn({ type: 'textBlock', text: 'ok' })
+    const streamSpy = vi.spyOn(model, 'stream')
+
+    const agent = new Agent({
+      model,
+      printer: false,
+      messages: [
+        new Message({ role: 'user', content: [new TextBlock('do thing')] }),
+        new Message({
+          role: 'assistant',
+          content: [new ToolUseBlock({ name: 'bad name!', toolUseId: 'tu-1', input: {} })],
+        }),
+        new Message({
+          role: 'user',
+          content: [
+            new ToolResultBlock({
+              toolUseId: 'tu-1',
+              status: 'success',
+              content: [new TextBlock('result')],
+            }),
+          ],
+        }),
+      ],
+    })
+
+    await agent.invoke('continue')
+
+    const sentMessages = streamSpy.mock.calls[0]?.[0] as Message[]
+    const assistantMessage = sentMessages.find((m) => m.role === 'assistant')!
+    const toolUse = assistantMessage.content.find((b) => b.type === 'toolUseBlock') as ToolUseBlock
+    expect(toolUse.name).toBe('INVALID_TOOL_NAME')
+    expect(toolUse.toolUseId).toBe('tu-1')
+
+    // Agent's stored history is not mutated.
+    const storedAssistant = agent.messages.find((m) => m.role === 'assistant')!
+    const storedToolUse = storedAssistant.content.find((b) => b.type === 'toolUseBlock') as ToolUseBlock
+    expect(storedToolUse.name).toBe('bad name!')
+  })
+
+  it('leaves valid names untouched', async () => {
+    const model = new MockMessageModel().addTurn({ type: 'textBlock', text: 'ok' })
+    const streamSpy = vi.spyOn(model, 'stream')
+
+    const agent = new Agent({
+      model,
+      printer: false,
+      messages: [
+        new Message({ role: 'user', content: [new TextBlock('do thing')] }),
+        new Message({
+          role: 'assistant',
+          content: [new ToolUseBlock({ name: 'good_tool-1', toolUseId: 'tu-1', input: {} })],
+        }),
+        new Message({
+          role: 'user',
+          content: [
+            new ToolResultBlock({
+              toolUseId: 'tu-1',
+              status: 'success',
+              content: [new TextBlock('result')],
+            }),
+          ],
+        }),
+      ],
+    })
+
+    await agent.invoke('continue')
+
+    const sentMessages = streamSpy.mock.calls[0]?.[0] as Message[]
+    const assistantMessage = sentMessages.find((m) => m.role === 'assistant')!
+    const toolUse = assistantMessage.content.find((b) => b.type === 'toolUseBlock') as ToolUseBlock
+    expect(toolUse.name).toBe('good_tool-1')
+  })
+})
