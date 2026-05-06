@@ -5,11 +5,39 @@
  * that preserves tool usage pairs and avoids invalid window states.
  */
 
-import { Message, TextBlock, ToolResultBlock } from '../types/messages.js'
+import { Message, TextBlock, ToolResultBlock, type ToolResultContent } from '../types/messages.js'
+import { ImageBlock } from '../types/media.js'
 import type { LocalAgent } from '../types/agent.js'
 import { AfterInvocationEvent } from '../hooks/events.js'
 import { ConversationManager, type ConversationManagerReduceOptions } from './conversation-manager.js'
 import { logger } from '../logging/logger.js'
+
+const PRESERVE_CHARS = 200
+// Max plausible marker length, including newlines. Used as the minimum reduction
+// a re-truncation would need to produce in order to be worth running.
+const MIN_TRUNCATION_GAIN = 50
+
+/**
+ * Build a short textual stand-in for an image block, used when truncating tool
+ * results. The placeholder identifies the image format and its source kind
+ * (bytes/url/s3) so the model can reason about what was dropped. For inline
+ * bytes the size is included; URL and S3 sources only report the kind since
+ * their byte count isn't known locally.
+ */
+function imagePlaceholder(image: ImageBlock): string {
+  const format = image.format ?? 'unknown'
+  const source = image.source
+  if (source.type === 'imageSourceBytes') {
+    return `[image: ${format}, source: bytes, ${source.bytes.byteLength} bytes]`
+  }
+  if (source.type === 'imageSourceUrl') {
+    return `[image: ${format}, source: url]`
+  }
+  if (source.type === 'imageSourceS3Location') {
+    return `[image: ${format}, source: s3]`
+  }
+  return `[image: ${format}]`
+}
 
 /**
  * Configuration for the sliding window conversation manager.
@@ -187,10 +215,15 @@ export class SlidingWindowConversationManager extends ConversationManager {
   }
 
   /**
-   * Truncate tool results in a message to reduce context size.
+   * Truncate tool results and replace image blocks in a message to reduce context size.
    *
-   * When a message contains tool results that are too large for the model's context window,
-   * this function replaces the content of those tool results with a simple error message.
+   * For text blocks inside tool results, content longer than 2 * {@link PRESERVE_CHARS}
+   * is partially truncated, keeping the first and last {@link PRESERVE_CHARS} characters
+   * and replacing the middle with a marker indicating how many characters were removed.
+   * Already-truncated text is skipped. The tool result status is preserved.
+   *
+   * Image blocks nested inside tool result content are replaced with a short descriptive
+   * placeholder.
    *
    * @param messages - The conversation message history.
    * @param msgIdx - Index of the message containing tool results to truncate.
@@ -206,46 +239,55 @@ export class SlidingWindowConversationManager extends ConversationManager {
       return false
     }
 
-    const toolResultTooLargeMessage = 'The tool result was too large!'
-    let foundToolResultToTruncate = false
+    let changesMade = false
+    const newContent = message.content.map((block) => {
+      if (block.type !== 'toolResultBlock') {
+        return block
+      }
 
-    // First, check if there's a tool result that needs truncation
-    for (const block of message.content) {
-      if (block.type === 'toolResultBlock') {
-        const toolResultBlock = block as ToolResultBlock
+      const toolResultBlock = block as ToolResultBlock
+      const newItems: ToolResultContent[] = []
+      let itemChanged = false
 
-        // Check if already truncated
-        const firstContent = toolResultBlock.content[0]
-        const contentText = firstContent && firstContent.type === 'textBlock' ? firstContent.text : ''
-
-        if (toolResultBlock.status === 'error' && contentText === toolResultTooLargeMessage) {
-          return false
+      for (const item of toolResultBlock.content) {
+        if (item.type === 'imageBlock') {
+          newItems.push(new TextBlock(imagePlaceholder(item)))
+          itemChanged = true
+          continue
         }
 
-        foundToolResultToTruncate = true
-        break
-      }
-    }
+        if (item.type === 'textBlock') {
+          const text = item.text
+          if (text.length > 2 * PRESERVE_CHARS + MIN_TRUNCATION_GAIN) {
+            const prefix = text.slice(0, PRESERVE_CHARS)
+            const suffix = text.slice(-PRESERVE_CHARS)
+            const removed = text.length - 2 * PRESERVE_CHARS
+            newItems.push(new TextBlock(`${prefix}\n<truncated chars="${removed}"/>\n${suffix}`))
+            itemChanged = true
+            continue
+          }
+        }
 
-    if (!foundToolResultToTruncate) {
+        newItems.push(item)
+      }
+
+      if (!itemChanged) {
+        return block
+      }
+
+      changesMade = true
+      return new ToolResultBlock({
+        toolUseId: toolResultBlock.toolUseId,
+        status: toolResultBlock.status,
+        content: newItems,
+        ...(toolResultBlock.error !== undefined ? { error: toolResultBlock.error } : {}),
+      })
+    })
+
+    if (!changesMade) {
       return false
     }
 
-    // Create new content array with truncated tool results
-    const newContent = message.content.map((block) => {
-      if (block.type === 'toolResultBlock') {
-        const toolResultBlock = block as ToolResultBlock
-        // Create new ToolResultBlock with truncated content
-        return new ToolResultBlock({
-          toolUseId: toolResultBlock.toolUseId,
-          status: 'error',
-          content: [new TextBlock(toolResultTooLargeMessage)],
-        })
-      }
-      return block
-    })
-
-    // Replace the message in the array with a new message containing the modified content
     messages[msgIdx] = new Message({
       role: message.role,
       content: newContent,
