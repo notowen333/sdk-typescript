@@ -156,13 +156,30 @@ export interface AgentNodeOptions {
    * this deadline.
    */
   timeout?: number
+  /**
+   * When `true`, the wrapped agent accumulates state (messages, appState,
+   * modelState) across node executions. Useful for graph patterns where a
+   * node is revisited and should build on its previous work (e.g., an
+   * analyst that accumulates findings, or iterative refinement).
+   *
+   * When `false` (default), the agent's state is snapshotted before each
+   * execution and restored in `finally`, so the node is stateless across
+   * visits.
+   *
+   * Only applies when the wrapped agent is an {@link Agent} instance;
+   * non-`Agent` `InvokableAgent`s are never snapshotted regardless of this
+   * flag.
+   */
+  stateful?: boolean
 }
 
 /**
  * Node that wraps an {@link InvokableAgent} instance for multi-agent orchestration.
  *
- * Each execution is isolated. When the wrapped agent is an {@link Agent} instance,
- * its internal state is snapshot/restored so it remains unchanged after the node completes.
+ * By default, when the wrapped agent is an {@link Agent} instance, its internal
+ * state is snapshot/restored around each execution so it remains unchanged
+ * after the node completes. Pass `stateful: true` to opt out and let the
+ * wrapped agent accumulate state across node executions.
  */
 export class AgentNode extends Node {
   readonly type = 'agentNode' as const
@@ -173,9 +190,14 @@ export class AgentNode extends Node {
    * See {@link AgentNodeOptions.timeout}.
    */
   readonly timeout?: number
+  /**
+   * Whether the wrapped agent retains state across node executions.
+   * See {@link AgentNodeOptions.stateful}.
+   */
+  readonly stateful: boolean
 
   constructor(options: AgentNodeOptions) {
-    const { agent, timeout, ...config } = options
+    const { agent, timeout, stateful, ...config } = options
 
     super(agent.id, {
       ...config,
@@ -189,6 +211,7 @@ export class AgentNode extends Node {
       }
       this.timeout = timeout
     }
+    this.stateful = stateful ?? false
   }
 
   get agent(): InvokableAgent {
@@ -213,9 +236,11 @@ export class AgentNode extends Node {
     // handle() is public API, so direct callers get per-call state.
     const invocationState: InvocationState = options?.invocationState ?? {}
 
-    // Only Agent instances support snapshot/restore for state isolation
+    // Only Agent instances support snapshot/restore for state isolation.
+    // When `stateful` is set, skip the cycle so the agent accumulates state
+    // across node executions.
     const snapshot =
-      this._agent instanceof Agent
+      !this.stateful && this._agent instanceof Agent
         ? takeSnapshot(this._agent, { include: ['messages', 'state', 'modelState'] })
         : undefined
     try {
